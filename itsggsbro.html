@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Die</title>
+    <h1>press space for power shot, Press h to heal</h1>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #222;
+            color: #fff;
+            text-align: center;
+            overflow: hidden;
+        }
+        #game-container {
+            max-width: 900px;
+            margin: 20px auto;
+        }
+        h1 {
+            color: #ff4d4d;
+            text-shadow: 2px 2px 4px #000;
+            margin-bottom: 10px;
+        }
+        canvas {
+            border: 2px solid #444;
+            background: #333;
+            display: block;
+            margin: 0 auto;
+        }
+        #ui {
+            margin-top: 10px;
+            font-size: 1.2em;
+            line-height: 1.5;
+        }
+        #game-over {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 10px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        #game-over h2 {
+            color: #ff4d4d;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #4ecdc4;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            font-size: 1.1em;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #45b7aa;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <h1>Sacrifices Must Be Made</h1>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <p>Health: <span id="health">100</span> | Food: <span id="food">20</span> | Score: <span id="score">0</span> | Sacrifices: <span id="sacrifices">0</span> | Time: <span id="timer">0</span>s</p>
+            <p>Controls: WASD to move, Mouse to aim, Left-click to shoot (1 food), Space for power shot (2 food), H to heal (5 food, +25 health), F for shield (10 health, 5s)</p>
+        </div>
+        <div id="game-over" style="display: none;">
+            <h2>Game Over</h2>
+            <p id="result"></p>
+            <button onclick="restartGame()">Restart</button>
+        </div>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        let player = {
+            x: 400,
+            y: 300,
+            health: 100,
+            food: 20,
+            sacrifices: 0,
+            speed: 5,
+            shield: 0 // Seconds of shield remaining
+        };
+        let enemies = [];
+        let foods = [];
+        let projectiles = [];
+        let time = 0;
+        let score = 0;
+        let gameOver = false;
+        const maxTime = 90; // 90 seconds to win
+
+        // Input handling
+        const keys = {};
+        window.addEventListener('keydown', e => {
+            keys[e.key] = true;
+            // Prevent holding for sacrifices
+            if (e.key === 'h' || e.key === 'f' || e.key === ' ') e.preventDefault();
+        });
+        window.addEventListener('keyup', e => keys[e.key] = false);
+
+        let mouseX = 400, mouseY = 300;
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        canvas.addEventListener('click', () => {
+            if (!gameOver && player.food >= 1) {
+                player.food -= 1;
+                player.sacrifices++;
+                const angle = Math.atan2(mouseY - (player.y + 10), mouseX - (player.x + 10));
+                projectiles.push({
+                    x: player.x + 10,
+                    y: player.y + 10,
+                    vx: Math.cos(angle) * 7,
+                    vy: Math.sin(angle) * 7,
+                    power: false
+                });
+            }
+        });
+
+        // Game objects
+        function spawnFood() {
+            foods.push({
+                x: Math.random() * (canvas.width - 15),
+                y: Math.random() * (canvas.height - 15)
+            });
+        }
+
+        function spawnEnemy() {
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            if (side === 0) { x = Math.random() * canvas.width; y = -10; } // Top
+            else if (side === 1) { x = Math.random() * canvas.width; y = canvas.height + 10; } // Bottom
+            else if (side === 2) { x = -10; y = Math.random() * canvas.height; } // Left
+            else { x = canvas.width + 10; y = Math.random() * canvas.height; } // Right
+            enemies.push({
+                x,
+                y,
+                speed: 1.5 + Math.random() * 1.5 + time / 180 // Increase speed over time
+            });
+        }
+
+        // Game logic
+        function update() {
+            if (gameOver) return;
+
+            // Player movement
+            if (keys['w'] || keys['ArrowUp']) player.y -= player.speed;
+            if (keys['s'] || keys['ArrowDown']) player.y += player.speed;
+            if (keys['a'] || keys['ArrowLeft']) player.x -= player.speed;
+            if (keys['d'] || keys['ArrowRight']) player.x += player.speed;
+
+            // Boundary check
+            player.x = Math.max(0, Math.min(player.x, canvas.width - 20));
+            player.y = Math.max(0, Math.min(player.y, canvas.height - 20));
+
+            // Sacrifice actions
+            if (keys['h'] && player.food >= 5) {
+                player.food -= 5;
+                player.health = Math.min(100, player.health + 25);
+                player.sacrifices++;
+                score -= 10; // Sacrifice penalty
+                keys['h'] = false;
+            }
+            if (keys['f'] && player.health >= 10 && player.shield <= 0) {
+                player.health -= 10;
+                player.shield = 5; // 5 seconds of shield
+                player.sacrifices++;
+                score -= 10;
+                keys['f'] = false;
+            }
+            if (keys[' '] && player.food >= 2) {
+                player.food -= 2;
+                player.sacrifices++;
+                score -= 5;
+                const angle = Math.atan2(mouseY - (player.y + 10), mouseX - (player.x + 10));
+                projectiles.push({
+                    x: player.x + 10,
+                    y: player.y + 10,
+                    vx: Math.cos(angle) * 10,
+                    vy: Math.sin(angle) * 10,
+                    power: true
+                });
+                keys[' '] = false;
+            }
+
+            // Update shield
+            if (player.shield > 0) player.shield -= 1 / 60;
+
+            // Update projectiles
+            projectiles = projectiles.filter(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                return p.x > -10 && p.x < canvas.width + 10 && p.y > -10 && p.y < canvas.height + 10;
+            });
+
+            // Enemy movement
+            enemies.forEach(enemy => {
+                const dx = player.x - enemy.x;
+                const dy = player.y - enemy.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                    enemy.x += (dx / dist) * enemy.speed;
+                    enemy.y += (dy / dist) * enemy.speed;
+                }
+                // Collision with player
+                if (dist < 20 && player.shield <= 0) {
+                    player.health -= 0.5;
+                    score -= 5;
+                }
+            });
+
+            // Projectile-enemy collision
+            projectiles.forEach((p, pi) => {
+                enemies = enemies.filter(e => {
+                    const dist = Math.sqrt((p.x - e.x) ** 2 + (p.y - e.y) ** 2);
+                    if (dist < 20 && (p.power || dist < 15)) {
+                        score += 20;
+                        return false;
+                    }
+                    return true;
+                });
+            });
+
+            // Collect food
+            foods = foods.filter(food => {
+                const dist = Math.sqrt((player.x - food.x) ** 2 + (player.y - food.y) ** 2);
+                if (dist < 20) {
+                    player.food += 3;
+                    score += 10;
+                    return false;
+                }
+                return true;
+            });
+
+            // Spawn food/enemies
+            if (Math.random() < 0.05) spawnFood();
+            if (Math.random() < 0.02 + time / 3000) spawnEnemy();
+
+            // Timer and win condition
+            time += 1 / 60;
+            if (time >= maxTime) {
+                gameOver = true;
+                document.getElementById('result').innerHTML = `You survived the wasteland! Final Score: ${Math.floor(score)}<br>Sacrifices Made: ${player.sacrifices}`;
+                document.getElementById('game-over').style.display = 'block';
+            }
+
+            // Game over check
+            if (player.health <= 0 || player.food <= 0) {
+                gameOver = true;
+                document.getElementById('result').innerHTML = `The wasteland claimed you. Final Score: ${Math.floor(score)}<br>Sacrifices Made: ${player.sacrifices}`;
+                document.getElementById('game-over').style.display = 'block';
+            }
+
+            // Update UI
+            document.getElementById('health').textContent = Math.floor(player.health);
+            document.getElementById('food').textContent = player.food;
+            document.getElementById('sacrifices').textContent = player.sacrifices;
+            document.getElementById('score').textContent = Math.floor(score);
+            document.getElementById('timer').textContent = Math.floor(time);
+        }
+
+        // Rendering
+        function draw() {
+            // Background
+            ctx.fillStyle = '#8B4513'; // Wasteland brown
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#A0522D'; // Scattered debris
+            for (let i = 0; i < 100; i++) {
+                ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 3, 3);
+            }
+
+            // Food (green squares)
+            ctx.fillStyle = '#32CD32';
+            foods.forEach(food => ctx.fillRect(food.x, food.y, 15, 15));
+
+            // Enemies (red triangles)
+            ctx.fillStyle = '#FF0000';
+            enemies.forEach(enemy => {
+                ctx.beginPath();
+                ctx.moveTo(enemy.x + 10, enemy.y);
+                ctx.lineTo(enemy.x, enemy.y + 15);
+                ctx.lineTo(enemy.x + 20, enemy.y + 15);
+                ctx.closePath();
+                ctx.fill();
+            });
+
+            // Projectiles (yellow circles, larger for power shots)
+            projectiles.forEach(p => {
+                ctx.fillStyle = p.power ? '#FFD700' : '#FFFF00';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.power ? 8 : 5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Player (blue circle with direction line)
+            ctx.fillStyle = '#0000FF';
+            ctx.beginPath();
+            ctx.arc(player.x + 10, player.y + 10, 10, 0, Math.PI * 2);
+            ctx.fill();
+            // Direction line
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(player.x + 10, player.y + 10);
+            const dx = mouseX - (player.x + 10);
+            const dy = mouseY - (player.y + 10);
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len > 0) {
+                ctx.lineTo(player.x + 10 + (dx / len) * 15, player.y + 10 + (dy / len) * 15);
+            }
+            ctx.stroke();
+
+            // Shield effect
+            if (player.shield > 0) {
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(player.x + 10, player.y + 10, 15, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Health bar
+            ctx.fillStyle = '#FF0000';
+            ctx.fillRect(player.x, player.y - 10, 20, 5);
+            ctx.fillStyle = '#00FF00';
+            ctx.fillRect(player.x, player.y - 10, (player.health / 100) * 20, 5);
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Restart
+        function restartGame() {
+            player = { x: 400, y: 300, health: 100, food: 20, sacrifices: 0, speed: 5, shield: 0 };
+            enemies = [];
+            foods = [];
+            projectiles = [];
+            time = 0;
+            score = 0;
+            gameOver = false;
+            document.getElementById('game-over').style.display = 'none';
+            document.getElementById('result').innerHTML = '';
+            for (let i = 0; i < 3; i++) {
+                spawnFood();
+                spawnEnemy();
+            }
+        }
+
+        // Start game
+        for (let i = 0; i < 3; i++) {
+            spawnFood();
+            spawnEnemy();
+        }
+        gameLoop();
+    </script>
+</body>
+</html>
